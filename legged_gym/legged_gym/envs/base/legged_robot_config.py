@@ -108,7 +108,10 @@ class LeggedRobotCfg(BaseConfig):
         camera_terrain_num_cols = 20
 
         position = [0.33, 0, 0.08]  # front camera (matches Isaaclab Go2 mount)
-        angle = [15, 25]  # reset pitch range when pitch_randomize_init is False
+        # Only play.py consults this, to derive the default render pitch
+        # ((15+25)/2 = 20). reset_idx does NOT: it draws from pitch_init_range
+        # above, or falls back to pitch_nominal when randomisation is off.
+        angle = [15, 25]
 
         # ---- Policy-driven pitch servo (the 13th action dim) ----
         # action[12] is an ABSOLUTE target angle around pitch_nominal:
@@ -140,10 +143,13 @@ class LeggedRobotCfg(BaseConfig):
         pitch_min = -180.0
         pitch_max = 180.0
         pitch_rate_limit = 120.0   # [deg/s]
-        # Reset inside the useful band (a level camera sees almost no ground
-        # within far_clip, which would starve the scan on the first steps).
+        # Uniform over the full circle: the servo has to recover from any mount
+        # angle, not just the useful band. ~39% of the circle (-160, -20 deg)
+        # points above the horizon, so those episodes open with an empty scan
+        # (scan_cells = 0) until the policy swings the camera down; pitch_min/
+        # pitch_max already cover the whole range, so no clamping is lost.
         pitch_randomize_init = True
-        pitch_init_range = [0.0, 40.0]
+        pitch_init_range = [-180.0, 180.0]
 
         # Servo actuator model: a position servo with stiffness/damping, used ONLY
         # to produce the torque/vel/acc terms that make it a joint for rewards and
