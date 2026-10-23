@@ -961,7 +961,9 @@ class LeggedRobot(BaseTask):
         lim = getattr(d, "servo_torque_limit", None)
         if lim is not None:
             tq = tq.clamp(-float(lim), float(lim))
-        self.servo_torques[:] = tq
+        # servo_torques keeps the [envs, cam_act] layout the servo reward
+        # reduces over; tq itself is one scalar per env (single pitch servo).
+        self.servo_torques[:] = tq.unsqueeze(1)
         self._sync_camera_pitch()
 
     def _sync_camera_pitch(self):
@@ -4067,12 +4069,16 @@ class LeggedRobot(BaseTask):
         return torch.sum(torch.square(self.servo_torques), dim=1)
 
     def _reward_servo_dof_vel(self):
-        return torch.sum(torch.square(self.cam_pitch_vel), dim=1)
+        if self.num_cam_actions == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+        # cam_pitch_* are [num_envs]: one servo per env, so there is no joint
+        # axis to reduce over (unlike servo_torques, which is [envs, cam_act]).
+        return torch.square(self.cam_pitch_vel)
 
     def _reward_servo_dof_acc(self):
         if self.num_cam_actions == 0:
             return torch.zeros(self.num_envs, device=self.device)
-        return torch.sum(torch.square(self.cam_pitch_acc), dim=1)
+        return torch.square(self.cam_pitch_acc)
 
 
 
