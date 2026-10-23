@@ -886,12 +886,38 @@ class LeggedRobot(BaseTask):
         rad = self.cam_pitch_deg * (np.pi / 180.0)
         return torch.stack((torch.sin(rad), torch.cos(rad)), dim=1)
 
+    def _map_pitch_action(self, a):
+        """Map the 13th action to an absolute pitch target [deg].
+
+        Piecewise so that two conflicting requirements coexist:
+          * a fine band around the nominal mount, where one unit of action moves
+            pitch_action_scale degrees, so the ~20 deg gain to the geometric
+            optimum (~40 deg) stays resolvable against the action noise;
+          * a coarse sweep of the remaining arc, so +-180 deg is still reachable.
+        A single linear gain cannot do both (30 deg/unit caps travel at 60 deg,
+        180 deg/unit drowns the 20 deg gain in noise). The map is continuous at
+        the band edges; only its slope jumps.
+        """
+        d = self.cfg.depth
+        fc = float(getattr(d, "pitch_fine_clip", 1.0))
+        if fc >= 1.0:
+            return torch.clamp(d.pitch_nominal + d.pitch_action_scale * a,
+                               d.pitch_min, d.pitch_max)
+        lo = d.pitch_nominal - d.pitch_action_scale * fc
+        hi = d.pitch_nominal + d.pitch_action_scale * fc
+        g_hi = (d.pitch_max - hi) / (1.0 - fc)
+        g_lo = (d.pitch_min - lo) / (fc - 1.0)
+        return torch.where(
+            a > fc, hi + g_hi * (a - fc),
+            torch.where(a < -fc, lo + g_lo * (a + fc),
+                        d.pitch_nominal + d.pitch_action_scale * a))
+
     def _update_camera_servo(self, actions):
         """Slew the depth-camera pitch servo toward the policy's target.
 
         The servo is driven exactly like a joint: action[num_dof] commands an
-        ABSOLUTE angle (pitch_nominal + scale * a), clamped to
-        [pitch_min, pitch_max] and rate-limited at pitch_rate_limit [deg/s].
+        ABSOLUTE angle (see _map_pitch_action), clamped to [pitch_min, pitch_max]
+        and rate-limited at pitch_rate_limit [deg/s].
         The residual is wrapped on [-180, 180) so crossing the +-180 seam takes
         the short way round, as a continuous-rotation servo does.
         """
@@ -900,8 +926,7 @@ class LeggedRobot(BaseTask):
         d = self.cfg.depth
         k = self.num_dof
         a = torch.clip(actions[:, k], -d.pitch_action_clip, d.pitch_action_clip)
-        target = torch.clamp(d.pitch_nominal + d.pitch_action_scale * a,
-                             d.pitch_min, d.pitch_max)
+        target = self._map_pitch_action(a)
         self.cam_pitch_target_deg[:] = target
 
         # Domain randomization uses the same 13-column tables as the legs:
@@ -928,8 +953,15 @@ class LeggedRobot(BaseTask):
         # Position-servo torque: consumed ONLY by the servo reward penalties
         # (the servo never enters the Isaac Gym DOF tensors).
         err = torch.remainder(target - self.cam_pitch_deg + 180.0, 360.0) - 180.0
-        self.servo_torques[:] = (d.servo_stiffness * kp * err * (np.pi / 180.0)
-                                 - d.servo_damping * kd * self.cam_pitch_vel)
+        tq = (d.servo_stiffness * kp * err * (np.pi / 180.0)
+              - d.servo_damping * kd * self.cam_pitch_vel)
+        # Stall-torque clamp: a real sub-Nm servo saturates, and without it the
+        # 180 deg error of the coarse band turns this term into a (180*da)^2
+        # penalty that dominates the shared advantage during exploration.
+        lim = getattr(d, "servo_torque_limit", None)
+        if lim is not None:
+            tq = tq.clamp(-float(lim), float(lim))
+        self.servo_torques[:] = tq
         self._sync_camera_pitch()
 
     def _sync_camera_pitch(self):

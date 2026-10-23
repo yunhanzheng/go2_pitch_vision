@@ -121,15 +121,21 @@ class LeggedRobotCfg(BaseConfig):
         # Nominal = the old fixed mount angle, so action 0 reproduces the
         # baseline camera pose and the policy only has to learn the deviation.
         pitch_nominal = 20.0
-        # 30 deg per unit action => a in [-1, 1] covers [-10, 50] deg. That is the
-        # only band where a single frame sees the front corridor at all: the
-        # geometric optimum sits near 40 deg (33/35 corridor cells vs 26/35 at
-        # 20 deg), and (-160, -20) deg is a dead zone (camera above the horizon,
-        # zero scan cells). The old 180 deg mapping spanned the full 360 deg but
-        # put the 20 deg geometric gain 18x below the action-noise std (1.0), so
-        # PPO could not resolve it. pitch_min/max stay at +-180 as the hard stop;
-        # reaching the rear half now requires an integrator or a staged mapping.
+        # Piecewise absolute map. |a| <= pitch_fine_clip uses the fine gain
+        # (pitch_action_scale); the outer bands sweep the rest of the circle at a
+        # coarse gain, so +-180 deg stays reachable.
+        #   fine band: a in [-2/3, 2/3] -> [  0,  40] deg  (30 deg per unit action)
+        #   rear side: a in [ 2/3,   1] -> [ 40, 180] deg
+        #   front-up:  a in [  -1, -2/3] -> [-180,  0] deg
+        # The fine band covers the geometric optimum: one frame sees 26/35 front-
+        # corridor cells at 20 deg vs 33/35 at 40 deg, and (-160, -20) deg is a
+        # dead zone (camera above the horizon, zero scan cells). A single linear
+        # 180 deg gain made the 20 deg geometric gain 18x smaller than the action
+        # noise std (1.0), so PPO could not resolve it; a single linear 30 deg
+        # gain resolved it but capped the travel at 60 deg. Only the piecewise
+        # map gets both.
         pitch_action_scale = 30.0
+        pitch_fine_clip = 2.0 / 3.0
         pitch_action_clip = 1.0
         pitch_min = -180.0
         pitch_max = 180.0
@@ -144,6 +150,13 @@ class LeggedRobotCfg(BaseConfig):
         # domain randomization. It does not react on the base.
         servo_stiffness = 20.0     # [Nm/rad]
         servo_damping = 0.5        # [Nm s/rad]
+        # Stall torque. Without it the position-servo map returns 62 Nm for a
+        # 180 deg error, which turns servo_torques into a (180*da)^2 term that
+        # swamps the shared PPO advantage during exploration (measured -1.10/
+        # step, std 1.11, vs a tracking signal std of ~0.2). Real sub-Nm servos
+        # saturate, so clamp the torque; the err->torque map stays linear (and
+        # still convergent) below ~5.7 deg of error and flat above it.
+        servo_torque_limit = 2.0   # [Nm]
 
         # ---- Terrain height scan reconstructed from the depth camera ----
         # The teacher no longer receives the privileged height query. Each capture
