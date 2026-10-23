@@ -49,6 +49,12 @@ import warnings
 
 class OnPolicyRunner:
 
+    # 'wococo' belongs to a contact-curriculum env and only reaches this runner
+    # because infos['episode'] forwards whatever the task put there. All 40 of
+    # its keys are identically zero in the parkour tasks, and at 40 of ~100 keys
+    # they were the largest single block of noise in every run's chart list.
+    WANDB_DROP_PREFIX = ('wococo/',)
+
     def __init__(self,
                  env: VecEnv,
                  train_cfg,
@@ -490,6 +496,8 @@ class OnPolicyRunner:
             wandb_dict['Train/mean_reward'] = statistics.mean(locs['rewbuffer'])
             wandb_dict['Train/mean_episode_length'] = statistics.mean(locs['lenbuffer'])
         
+        wandb_dict = {k: v for k, v in wandb_dict.items()
+                      if not k.startswith(self.WANDB_DROP_PREFIX)}
         wandb.log(wandb_dict, step=locs['it'])
 
         str = f" \033[1m Learning iteration {locs['it']}/{self.current_learning_iteration + locs['num_learning_iterations']} \033[0m "
@@ -577,6 +585,8 @@ class OnPolicyRunner:
             # wandb_dict['Train/mean_reward/time', statistics.mean(locs['rewbuffer']), self.tot_time)
             # wandb_dict['Train/mean_episode_length/time', statistics.mean(locs['lenbuffer']), self.tot_time)
 
+        wandb_dict = {k: v for k, v in wandb_dict.items()
+                      if not k.startswith(self.WANDB_DROP_PREFIX)}
         wandb.log(wandb_dict, step=locs['it'])
 
         str = f" \033[1m Learning iteration {locs['it']}/{self.current_learning_iteration + locs['num_learning_iterations']} \033[0m "
