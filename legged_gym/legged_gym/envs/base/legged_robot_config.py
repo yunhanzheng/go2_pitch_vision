@@ -121,7 +121,15 @@ class LeggedRobotCfg(BaseConfig):
         # Nominal = the old fixed mount angle, so action 0 reproduces the
         # baseline camera pose and the policy only has to learn the deviation.
         pitch_nominal = 20.0
-        pitch_action_scale = 180.0
+        # 30 deg per unit action => a in [-1, 1] covers [-10, 50] deg. That is the
+        # only band where a single frame sees the front corridor at all: the
+        # geometric optimum sits near 40 deg (33/35 corridor cells vs 26/35 at
+        # 20 deg), and (-160, -20) deg is a dead zone (camera above the horizon,
+        # zero scan cells). The old 180 deg mapping spanned the full 360 deg but
+        # put the 20 deg geometric gain 18x below the action-noise std (1.0), so
+        # PPO could not resolve it. pitch_min/max stay at +-180 as the hard stop;
+        # reaching the rear half now requires an integrator or a staged mapping.
+        pitch_action_scale = 30.0
         pitch_action_clip = 1.0
         pitch_min = -180.0
         pitch_max = 180.0

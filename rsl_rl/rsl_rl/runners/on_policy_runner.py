@@ -506,6 +506,35 @@ class OnPolicyRunner:
         mean_std = self.alg.actor_critic.std.mean()
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs['collection_time'] + locs['learn_time']))
 
+        # ---- Camera pitch servo diagnostics (13th action dim) ----
+        # Whether the servo learns anything hinges on two numbers the scalar
+        # mean_std cannot show: the per-dim exploration std that sets the SNR
+        # against the ~20 deg geometric gain, and where the camera actually
+        # sits. frac_blind counts envs parked in (-160, -20) deg, where the
+        # camera points above the horizon and the depth frame yields no cells.
+        _servo_txt = 'n/a'
+        if getattr(self.env, 'num_cam_actions', 0) > 0:
+            _k = int(getattr(self.env, 'num_dof', self.env.num_actions - 1))
+            _pitch = self.env.cam_pitch_true_deg
+            _p0 = _pitch.mean().item()
+            _p10 = _pitch.quantile(0.1).item()
+            _p50 = _pitch.quantile(0.5).item()
+            _p90 = _pitch.quantile(0.9).item()
+            _std_srv = self.alg.actor_critic.std[_k].item()
+            _blind = ((_pitch > -160.0) & (_pitch < -20.0)).float().mean().item()
+            wandb_dict['Servo/action_std'] = _std_srv
+            wandb_dict['Servo/pitch_mean'] = _p0
+            wandb_dict['Servo/pitch_std'] = _pitch.std().item()
+            wandb_dict['Servo/pitch_p10'] = _p10
+            wandb_dict['Servo/pitch_p50'] = _p50
+            wandb_dict['Servo/pitch_p90'] = _p90
+            wandb_dict['Servo/frac_blind'] = _blind
+            if hasattr(self.env, 'scanned_mask'):
+                wandb_dict['Servo/scan_cells'] = (
+                    self.env.scanned_mask.sum(dim=1).float().mean().item())
+            _servo_txt = (f"std {_std_srv:.3f}, pitch {_p0:6.1f} "
+                          f"[{_p10:6.1f}, {_p90:6.1f}], blind {_blind*100:.0f}%")
+
         wandb_dict['Loss/value_function'] = ['mean_value_loss']
         wandb_dict['Loss/surrogate'] = locs['mean_surrogate_loss']
         wandb_dict['Loss/estimator'] = locs['mean_estimator_loss']
@@ -549,6 +578,7 @@ class OnPolicyRunner:
                           f"""{'Discriminator loss:':>{pad}} {locs['mean_disc_loss']:.4f}\n"""
                           f"""{'Discriminator accuracy:':>{pad}} {locs['mean_disc_acc']:.4f}\n"""
                           f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                          f"""{'Servo std / pitch:':>{pad}} {_servo_txt}\n"""
                           f"""{'Mean reward (total):':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                           f"""{'Mean reward (task):':>{pad}} {statistics.mean(locs['rewbuffer']) - statistics.mean(locs['rew_explr_buffer']):.2f}\n"""
                           f"""{'Mean reward (exploration):':>{pad}} {statistics.mean(locs['rew_explr_buffer']):.2f}\n"""
@@ -564,7 +594,8 @@ class OnPolicyRunner:
                           f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
                           f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
                           f"""{'Estimator loss:':>{pad}} {locs['mean_estimator_loss']:.4f}\n"""
-                          f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n""")
+                          f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                          f"""{'Servo std / pitch:':>{pad}} {_servo_txt}\n""")
                         #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
                         #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
 
