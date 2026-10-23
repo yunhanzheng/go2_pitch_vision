@@ -173,7 +173,11 @@ def train(args):
     # Distillation guard: a student must NEVER train on undelayed actions — deploy
     # runs the enforced 16 ms proprio pad (~= the 1-step delay), so require --delay
     # to latch it from step 0 (helpers.py sets action_delay_start_latched).
-    if (args.use_camera and not args.delay
+    # Teachers pass --use_camera too — it is the only way to set
+    # cfg.depth.use_camera, which the depth->scan path needs — but they must keep
+    # their curriculum-scheduled latch (action_delay_latch_mean_level), so the
+    # requirement is student-only.
+    if ("student" in args.task and args.use_camera and not args.delay
             and getattr(env_cfg.domain_rand, "action_delay_latch_mean_level", None) is not None):
         raise SystemExit(
             "[train] ERROR: distillation (--use_camera) on a config with "

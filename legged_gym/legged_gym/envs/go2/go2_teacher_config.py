@@ -145,6 +145,15 @@ class Go2TeacherCfg( Go2RoughCfg ):
         penalize_contacts_on        = ["thigh", "calf", "Head"]
         terminate_after_contacts_on = ["base", "Head"]
 
+    class depth( Go2RoughCfg.depth ):
+        # helpers.py reads the camera terrain rewrites off cfg.depth, NOT
+        # cfg.terrain, so these have to live here to take effect. The teacher
+        # owns its 8 m tiles at 5 cm and the IsaacLab rough mix; the stock
+        # camera rewrite would coarsen cells to horizontal_scale_camera (0.1)
+        # and inject parkour_* slots, which overruns demo_terrain's 8 m layout.
+        override_terrain_mix_for_camera  = False
+        override_terrain_grid_for_camera = False
+
     class terrain( Go2RoughCfg.terrain ):
         # measured_points_* intentionally inherited: the base grid is now 17 x 17
         # over +-2 m, aligned with the camera-reconstructed scan grid.
@@ -172,12 +181,6 @@ class Go2TeacherCfg( Go2RoughCfg ):
         border_size      = 5
         hf2mesh_method   = "fast"
         max_error        = 1.0
-
-        # Keep the --use_camera path from rewriting this mix and grid: helpers.py
-        # would otherwise inject parkour_* keys (shifting every slot index
-        # make_terrain keys off) and coarsen cells to horizontal_scale_camera.
-        override_terrain_mix_for_camera  = False
-        override_terrain_grid_for_camera = False
 
         # ---- IsaacLab rough.py mix (ROUGH_TERRAINS_CFG.sub_terrains) --------
         # Slot i is the branch for proportions[i]. A slope/stair inverted pair
