@@ -415,6 +415,42 @@ class OnPolicyRunner:
             ep_infos.clear()
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(tot_iter)))
 
+    def _servo_stats(self, wandb_dict):
+        """Camera pitch servo diagnostics (13th action dim); returns a display line.
+
+        Whether the servo learns anything hinges on two numbers the scalar
+        mean_std cannot show: the per-dim exploration std that sets the SNR
+        against the ~20 deg geometric gain, and where the camera actually
+        sits. frac_blind counts envs parked in (-160, -20) deg, where the
+        camera points above the horizon and the depth frame yields no cells.
+
+        Shared by log() and log_vision(): the teacher trains through
+        learn_vision(), so while this lived only in log() the whole Servo/
+        group was missing from exactly the runs that have a servo.
+        """
+        if getattr(self.env, 'num_cam_actions', 0) <= 0:
+            return 'n/a'
+        k = int(getattr(self.env, 'num_dof', self.env.num_actions - 1))
+        pitch = self.env.cam_pitch_true_deg
+        p0 = pitch.mean().item()
+        p10 = pitch.quantile(0.1).item()
+        p50 = pitch.quantile(0.5).item()
+        p90 = pitch.quantile(0.9).item()
+        std_srv = self.alg.actor_critic.std[k].item()
+        blind = ((pitch > -160.0) & (pitch < -20.0)).float().mean().item()
+        wandb_dict['Servo/action_std'] = std_srv
+        wandb_dict['Servo/pitch_mean'] = p0
+        wandb_dict['Servo/pitch_std'] = pitch.std().item()
+        wandb_dict['Servo/pitch_p10'] = p10
+        wandb_dict['Servo/pitch_p50'] = p50
+        wandb_dict['Servo/pitch_p90'] = p90
+        wandb_dict['Servo/frac_blind'] = blind
+        if hasattr(self.env, 'scanned_mask'):
+            wandb_dict['Servo/scan_cells'] = (
+                self.env.scanned_mask.sum(dim=1).float().mean().item())
+        return (f"std {std_srv:.3f}, pitch {p0:6.1f} "
+                f"[{p10:6.1f}, {p90:6.1f}], blind {blind*100:.0f}%")
+
     def log_vision(self, locs, width=80, pad=35):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += locs['collection_time'] + locs['learn_time']
@@ -443,6 +479,9 @@ class OnPolicyRunner:
         wandb_dict['Loss_depth/depth_actor'] = locs['depth_actor_loss']
         if self.use_yaw:
             wandb_dict['Loss_depth/yaw'] = locs['yaw_loss']
+        # learn_vision() logs locals(), which has no PPO terms (mean_value_loss
+        # and friends live only in learn_RL), so Loss/* stays out of this dict.
+        servo_txt = self._servo_stats(wandb_dict)
         wandb_dict['Policy/mean_noise_std'] = mean_std.item()
         wandb_dict['Perf/total_fps'] = fps
         wandb_dict['Perf/collection time'] = locs['collection_time']
@@ -463,6 +502,7 @@ class OnPolicyRunner:
                           f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
                           f"""{'Mean reward (total):':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                           f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+                          f"""{'Servo std / pitch:':>{pad}} {servo_txt}\n"""
                           f"""{'Depth encoder loss:':>{pad}} {locs['depth_encoder_loss']:.4f}\n"""
                           f"""{'Depth actor loss:':>{pad}} {locs['depth_actor_loss']:.4f}\n"""
                           f"""{'Yaw loss:':>{pad}} {locs['yaw_loss']:.4f}\n""")
@@ -506,36 +546,9 @@ class OnPolicyRunner:
         mean_std = self.alg.actor_critic.std.mean()
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs['collection_time'] + locs['learn_time']))
 
-        # ---- Camera pitch servo diagnostics (13th action dim) ----
-        # Whether the servo learns anything hinges on two numbers the scalar
-        # mean_std cannot show: the per-dim exploration std that sets the SNR
-        # against the ~20 deg geometric gain, and where the camera actually
-        # sits. frac_blind counts envs parked in (-160, -20) deg, where the
-        # camera points above the horizon and the depth frame yields no cells.
-        _servo_txt = 'n/a'
-        if getattr(self.env, 'num_cam_actions', 0) > 0:
-            _k = int(getattr(self.env, 'num_dof', self.env.num_actions - 1))
-            _pitch = self.env.cam_pitch_true_deg
-            _p0 = _pitch.mean().item()
-            _p10 = _pitch.quantile(0.1).item()
-            _p50 = _pitch.quantile(0.5).item()
-            _p90 = _pitch.quantile(0.9).item()
-            _std_srv = self.alg.actor_critic.std[_k].item()
-            _blind = ((_pitch > -160.0) & (_pitch < -20.0)).float().mean().item()
-            wandb_dict['Servo/action_std'] = _std_srv
-            wandb_dict['Servo/pitch_mean'] = _p0
-            wandb_dict['Servo/pitch_std'] = _pitch.std().item()
-            wandb_dict['Servo/pitch_p10'] = _p10
-            wandb_dict['Servo/pitch_p50'] = _p50
-            wandb_dict['Servo/pitch_p90'] = _p90
-            wandb_dict['Servo/frac_blind'] = _blind
-            if hasattr(self.env, 'scanned_mask'):
-                wandb_dict['Servo/scan_cells'] = (
-                    self.env.scanned_mask.sum(dim=1).float().mean().item())
-            _servo_txt = (f"std {_std_srv:.3f}, pitch {_p0:6.1f} "
-                          f"[{_p10:6.1f}, {_p90:6.1f}], blind {_blind*100:.0f}%")
+        _servo_txt = self._servo_stats(wandb_dict)
 
-        wandb_dict['Loss/value_function'] = ['mean_value_loss']
+        wandb_dict['Loss/value_function'] = locs['mean_value_loss']
         wandb_dict['Loss/surrogate'] = locs['mean_surrogate_loss']
         wandb_dict['Loss/estimator'] = locs['mean_estimator_loss']
         wandb_dict['Loss/hist_latent_loss'] = locs['mean_hist_latent_loss']
