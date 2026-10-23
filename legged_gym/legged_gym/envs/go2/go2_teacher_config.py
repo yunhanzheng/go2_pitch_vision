@@ -154,17 +154,71 @@ class Go2TeacherCfg( Go2RoughCfg ):
         scandot_occlusion_mask = False
 
         curriculum  = True
-        no_demotion = False   # the demote band below needs demotion on
-        num_cols    = 80
+        no_demotion = False
 
-        horizontal_scale        = 0.01   # 1 cm cells represent the thickness curriculum
-        terrain_length          = 10.0
-        border_size             = 1.5
-        hf2mesh_method           = "fast"
-        max_error                = 1.0
+        # IsaacLab rough.py layout: 8 x 8 m tiles, 10 curriculum rows, 20 type
+        # columns. 20 columns is what makes the 6-way split land on even
+        # boundaries: curiculum() sets choice = j / num_cols, so each 0.2-wide
+        # slot below owns exactly 4 columns.
+        num_rows       = 10
+        num_cols       = 20
+        terrain_length = 8.0
+        terrain_width  = 8.0
 
-        height = [0.02, 0.06]  # curriculum roughness for the rough half of tiles
-        flyball_roughness_zero_prob = 0.5  # 50% smooth tiles, 50% rough curriculum
+        # 5 cm cells. The old 1 cm existed only to resolve the flyball 1 cm bars;
+        # on 8 m tiles it would need a 5x taller/wider height field for nothing.
+        # The map is then (10*8 + 2*5) x (20*8 + 2*5) m = 1800 x 3400 px.
+        horizontal_scale = 0.05
+        border_size      = 5
+        hf2mesh_method   = "fast"
+        max_error        = 1.0
+
+        # Keep the --use_camera path from rewriting this mix and grid: helpers.py
+        # would otherwise inject parkour_* keys (shifting every slot index
+        # make_terrain keys off) and coarsen cells to horizontal_scale_camera.
+        override_terrain_mix_for_camera  = False
+        override_terrain_grid_for_camera = False
+
+        # ---- IsaacLab rough.py mix (ROUGH_TERRAINS_CFG.sub_terrains) --------
+        # Slot i is the branch for proportions[i]. A slope/stair inverted pair
+        # shares one slot: make_terrain splits it in half and flips the sign.
+        #   slot 0 -> idx 0  HfPyramidSlopedTerrainCfg            0.10
+        #          -> idx 1  HfInvertedPyramidSlopedTerrainCfg    0.10
+        #   slot 3 -> idx 5  MeshInvertedPyramidStairsTerrainCfg  0.20
+        #   slot 4 -> idx 4  MeshPyramidStairsTerrainCfg          0.20
+        #   slot 5 -> idx 6  MeshRandomGridTerrainCfg             0.20
+        #   slot 8 -> idx 9  HfRandomUniformTerrainCfg            0.20
+        terrain_dict = {"smooth slope": 0.2,
+                        "rough slope up": 0.0,
+                        "rough slope down": 0.0,
+                        "rough stairs up": 0.2,
+                        "rough stairs down": 0.2,
+                        "discrete": 0.2,
+                        "stepping stones": 0.0,
+                        "gaps": 0.0,
+                        "smooth flat": 0.2,
+                        "parkour_stones": 0.0,
+                        "wall": 0.0,
+                        "platform": 0.0,
+                        "large stairs up": 0.0,
+                        "large stairs down": 0.0,
+                        "parkour": 0.0,
+                        "two_hurdles_wall_turn": 0.0,
+                        "parkour_flat": 0.0,
+                        "parkour_step": 0.0,
+                        "flyball_box": 0.0,
+                        "demo": 0.0,
+                        }
+        terrain_proportions = list(terrain_dict.values())
+
+        # Roughness amplitude added ON TOP of stairs/slopes by add_roughness.
+        # Kept small (2-6 cm): it is a surface break-up for sim2real, not the
+        # terrain itself. The pure-noise tile gets its own 2-10 cm range from
+        # HfRandomUniformTerrainCfg's noise_range inside make_terrain.
+        height = [0.02, 0.06]
+        flyball_roughness_zero_prob = 0.5
+
+        # ---- below is flyball-only and inert with the mix above ------------
 
         flyball_add_hurdle                  = True
         flyball_add_second_hurdle           = True

@@ -421,6 +421,23 @@ class Terrain:
         height = random.uniform(self.cfg.height[0], max_height)
         terrain_utils.random_uniform_terrain(terrain, min_height=-height, max_height=height, step=0.005, downsampled_scale=self.cfg.downsampled_scale)
 
+    def _centerline_goals(self, terrain):
+        """Evenly spaced goals down +x on the tile centreline.
+
+        add_terrain_to_map reads terrain.goals and fills each z from the height
+        field, so a rough tile gets goals sitting on its own surface. Without
+        this call a tile leaves goals at zero and every goal collapses onto the
+        tile corner.
+        """
+        _mid_y = terrain.length // 2
+        _plat = round(2.5 / terrain.horizontal_scale)
+        _ng = self.num_goals
+        _gx = np.linspace(_plat, terrain.width - round(0.5 / terrain.horizontal_scale), _ng)
+        _g = np.zeros((_ng, 2))
+        _g[:, 0] = _gx
+        _g[:, 1] = _mid_y
+        terrain.goals = _g * terrain.horizontal_scale
+
     def make_terrain(self, choice, difficulty, level=None):
         terrain = terrain_utils.SubTerrain(   "terrain",
                                 width=self.length_per_env_pixels,
@@ -428,8 +445,8 @@ class Terrain:
                                 vertical_scale=self.cfg.vertical_scale,
                                 horizontal_scale=self.cfg.horizontal_scale)
         slope = difficulty * 0.4
-        step_height = 0.02 + 0.14 * difficulty
-        discrete_obstacles_height = 0.03 + difficulty * 0.15
+        # IsaacLab rough.py MeshPyramidStairsTerrainCfg: step_height_range=(0.05, 0.23).
+        step_height = 0.05 + 0.18 * difficulty
         stepping_stones_size = 1.5 * (1.05 - difficulty)
         stone_distance = 0.05 if difficulty==0 else 0.1
         gap_size = 1. * difficulty
@@ -441,28 +458,35 @@ class Terrain:
             if choice < self.proportions[0]/ 2:
                 idx = 1
                 slope *= -1
-            terrain_utils.pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
+            terrain_utils.pyramid_sloped_terrain(terrain, slope=slope, platform_size=2.)
+            self._centerline_goals(terrain)
         elif choice < self.proportions[2]:
             idx = 2
             if choice<self.proportions[1]:
                 idx = 3
                 slope *= -1
-            terrain_utils.pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
+            terrain_utils.pyramid_sloped_terrain(terrain, slope=slope, platform_size=2.)
             self.add_roughness(terrain)
+            self._centerline_goals(terrain)
         elif choice < self.proportions[4]:
             idx = 4
             if choice<self.proportions[3]:
                 idx = 5
                 step_height *= -1
-            terrain_utils.pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
+            terrain_utils.pyramid_stairs_terrain(terrain, step_width=0.3, step_height=step_height, platform_size=3.)
             self.add_roughness(terrain)
+            self._centerline_goals(terrain)
         elif choice < self.proportions[5]:
             idx = 6
-            num_rectangles = 20
-            rectangle_min_size = 0.5
-            rectangle_max_size = 2.
-            terrain_utils.discrete_obstacles_terrain(terrain, discrete_obstacles_height, rectangle_min_size, rectangle_max_size, num_rectangles, platform_size=3.)
-            self.add_roughness(terrain)
+            # IsaacLab rough.py MeshRandomGridTerrainCfg: grid_width=0.45,
+            # grid_height_range=(0.05, 0.2), platform_width=2.0. Discrete plateaus
+            # rather than the old scattered rectangles, and no roughness on top so
+            # the plateau tops stay flat.
+            random_grid_terrain(terrain,
+                                grid_width=0.45,
+                                grid_height=0.05 + 0.15 * difficulty,
+                                platform_size=2.0)
+            self._centerline_goals(terrain)
         elif choice < self.proportions[6]:
             idx = 7
             stones_size = 1.5 - 1.2*difficulty
@@ -475,17 +499,13 @@ class Terrain:
             self.add_roughness(terrain)
         elif choice < self.proportions[8]:
             idx = 9
-            # "smooth flat": ONLY roughness scales with difficulty; the robot tracks
-            # evenly-spaced centerline goals down +x.
-            self.add_roughness(terrain, difficulty=difficulty)
-            _mid_y = terrain.length // 2
-            _plat = round(2.5 / terrain.horizontal_scale)
-            _ng = self.num_goals
-            _gx = np.linspace(_plat, terrain.width - round(0.5 / terrain.horizontal_scale), _ng)
-            _g = np.zeros((_ng, 2))
-            _g[:, 0] = _gx
-            _g[:, 1] = _mid_y
-            terrain.goals = _g * terrain.horizontal_scale
+            # IsaacLab rough.py HfRandomUniformTerrainCfg: noise_range=(0.02, 0.10),
+            # noise_step=0.02. Per-cell uniform noise quantised to 2 cm; goals ride
+            # the resulting surface via add_terrain_to_map's height sample.
+            _noise = 0.02 + 0.08 * difficulty
+            terrain_utils.random_uniform_terrain(
+                terrain, min_height=-_noise, max_height=_noise, step=0.02)
+            self._centerline_goals(terrain)
         elif choice < self.proportions[9]:
             idx = 10
             x_range = [-0.1, 0.1 + 0.3 * difficulty]
@@ -959,6 +979,32 @@ class Terrain:
                 px = int(np.clip((world_x + self.cfg.border_size) / self.cfg.horizontal_scale, 0, self.height_field_raw.shape[0] - 1))
                 py = int(np.clip((world_y + self.cfg.border_size) / self.cfg.horizontal_scale, 0, self.height_field_raw.shape[1] - 1))
                 self.goals[i, j, g, 2] = self.height_field_raw[px, py] * self.cfg.vertical_scale
+
+def random_grid_terrain(terrain, grid_width, grid_height, platform_size=0.0):
+    """IsaacLab MeshRandomGridTerrainCfg on a height field.
+
+    The tile is cut into grid_width x grid_width cells and each cell is raised
+    by one uniform draw in [0, grid_height] (a flat-topped plateau, unlike
+    discrete_obstacles_terrain which scatters rectangles). The central
+    platform_size square is kept level at zero so a policy can start there.
+    """
+    hs = terrain.horizontal_scale
+    vs = terrain.vertical_scale
+    gw = max(1, int(round(grid_width / hs)))
+    # height_field_raw is (x_pixels, y_pixels) because make_terrain passes
+    # width=length_pixels, length=width_pixels into SubTerrain.
+    nx = int(np.ceil(terrain.width / gw))
+    ny = int(np.ceil(terrain.length / gw))
+    cells = np.random.uniform(0.0, max(float(grid_height), 0.0), size=(nx, ny))
+    field = np.repeat(np.repeat(cells, gw, axis=0), gw, axis=1)
+    field = field[:terrain.width, :terrain.length]
+    if platform_size > 0:
+        ps = int(round(platform_size / hs))
+        cx = terrain.width // 2 - ps // 2
+        cy = terrain.length // 2 - ps // 2
+        field[max(cx, 0):max(cx, 0) + ps, max(cy, 0):max(cy, 0) + ps] = 0.0
+    terrain.height_field_raw += np.rint(field / vs).astype(np.int16)
+
 
 def gap_terrain(terrain, gap_size, platform_size=1.):
     gap_size = int(gap_size / terrain.horizontal_scale)
