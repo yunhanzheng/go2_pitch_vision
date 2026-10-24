@@ -3048,6 +3048,9 @@ class LeggedRobot(BaseTask):
         self._resample_commands(torch.arange(self.num_envs, device=self.device, requires_grad=False))
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
+        # Swing timer for _reward_feet_air_time, in seconds. Reset per foot on
+        # touchdown, the way IsaacLab's feet_air_time term expects.
+        self.feet_air_time = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts_obs = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.contact_thresh = torch.full((self.num_envs, len(self.feet_indices)), 2., device=self.device, requires_grad=False)
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
@@ -4160,6 +4163,45 @@ class LeggedRobot(BaseTask):
             exempt = exempt | (self.wococo_armed & (self.wococo_contact_stage < self._wococo_sentinel_stage))
         rew[exempt] = 0.
         return rew
+
+    def _reward_feet_air_time(self):
+        """IsaacLab mdp.feet_air_time, ported to this repo's buffers.
+
+        Pays the swing time in excess of rewards.feet_air_time_threshold, once,
+        at the touchdown step. IsaacLab gets first_contact and last_air_time
+        from its ContactSensor; here contact_filt (already merged over two
+        frames in post_physics_step) plays the first role and feet_air_time the
+        second, so a one-frame contact dropout mid-stance does not refund the
+        timer. The command gate keeps a standing robot from being paid for
+        picking a foot up in place, same > 0.1 as IsaacLab.
+        """
+        first_contact = (self.feet_air_time > 0.0) * self.contact_filt
+        self.feet_air_time += self.dt
+        rew = torch.sum(
+            (self.feet_air_time - self.cfg.rewards.feet_air_time_threshold)
+            * first_contact, dim=1)
+        rew *= (torch.norm(self.commands[:, :2], dim=1) > 0.1)
+        self.feet_air_time *= ~self.contact_filt
+        return rew
+
+    def _reward_undesired_contacts(self):
+        """IsaacLab mdp.undesired_contacts, ported to this repo's buffers.
+
+        One penalty per penalised body whose contact force exceeds
+        rewards.undesired_contacts_threshold. Shares
+        penalised_contact_indices with _reward_collision but keys on a force
+        threshold instead of collision-geometry overlap, so the two fire on
+        different things: collision catches the mesh, this catches a soft
+        thigh/calf/Head touch the geometry test misses. IsaacLab's Go2 config
+        disables it outright (rough_env_cfg.py sets it to None), so the scale
+        defaults to 0 here too -- turn it on only after checking that
+        _reward_collision is not already covering the same contacts.
+        """
+        if self.penalised_contact_indices.numel() == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+        force = torch.norm(
+            self.contact_forces[:, self.penalised_contact_indices, :], dim=-1)
+        return (force > self.cfg.rewards.undesired_contacts_threshold).float().sum(dim=1)
 
     def _reward_feet_edge(self):
         feet_pos_xy = ((self.rigid_body_states[:, self.feet_indices, :2] + self.terrain.cfg.border_size) / self.cfg.terrain.horizontal_scale).round().long()  # (num_envs, 4, 2)

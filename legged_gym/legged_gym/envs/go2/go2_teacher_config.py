@@ -489,14 +489,35 @@ class Go2TeacherCfg( Go2RoughCfg ):
         hip_pos_episode_multiplier = 1.0
 
         class scales( Go2RoughCfg.rewards.scales ):
-            collision = -20.
-            dof_pos_limits = -10.0
+            # ---- IsaacLab UnitreeGo2RoughEnvCfg.RewardsCfg, all eleven terms ----
+            # Base weights: velocity_env_cfg.py:222-255. Go2 overrides:
+            # config/go2/rough_env_cfg.py:50-57. Names follow this repo's
+            # _reward_* methods, with the IsaacLab term in the comment.
+            #
+            # Nine of the eleven already existed here under another name, so
+            # they are re-weighted in place. Listing both spellings would put
+            # two active entries on one physical quantity and double the
+            # penalty, which is why only the two genuinely new terms
+            # (feet_air_time, undesired_contacts) are additions.
+            tracking_goal_vel  = 1.5     # track_lin_vel_xy_exp  (this repo: min/div kernel)
+            tracking_yaw       = 0.75    # track_ang_vel_z_exp   (was 0.5)
+            lin_vel_z          = -2.0    # lin_vel_z_l2          (was -1.0)
+            ang_vel_xy         = -0.05   # ang_vel_xy_l2
+            torques            = -0.0002 # dof_torques_l2        (was -1e-5, Go2 tightens it 20x)
+            dof_acc            = -2.5e-7 # dof_acc_l2
+            action_rate        = -0.01   # action_rate_l2        (was -0.1)
+            feet_air_time      = 0.01    # feet_air_time         (NEW; Go2 lowers 0.125 to 0.01)
+            undesired_contacts = 0.0     # undesired_contacts    (NEW; IsaacLab Go2 sets it None)
+            # IsaacLab leaves flat_orientation_l2 and dof_pos_limits at 0.0 for
+            # Go2. flat_orientation_l2 is this repo's `orientation`, which keeps
+            # its flat-terrain gate; dof_pos_limits stays tight on purpose.
+            orientation        = -1.0
+            dof_pos_limits     = -10.0
 
-            tracking_goal_vel = 1.5   # combined tracking budget 2.0
-            tracking_yaw      = 0.5
+            # ---- Terms with no IsaacLab counterpart ----
+            collision = -20.
             standstill_orientation = 0.5
             feet_contact_forces = -0.01
-
             termination = -150.0
             timeout     = 0.0
 
