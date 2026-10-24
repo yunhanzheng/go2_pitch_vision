@@ -124,6 +124,18 @@ class LeggedRobotCfg(BaseConfig):
         # Nominal = the old fixed mount angle, so action 0 reproduces the
         # baseline camera pose and the policy only has to learn the deviation.
         pitch_nominal = 20.0
+        # Per-env base angle, drawn once at build time and kept for the whole
+        # run. Every constant servo action is equally cheap (all three servo
+        # penalties vanish once the servo stops moving), so a policy that never
+        # learns this dimension parks each env at its own nominal: pitch_mean
+        # -> ~0 and pitch_std -> ~104 deg, forever. A policy that does learn
+        # collapses both onto whatever angle the task prefers. Unlike
+        # pitch_init_range, this signature cannot wash out after a few steps,
+        # because nothing pulls the envs back together. While it is on, task
+        # difficulty differs per env -- that is the price of a readable servo
+        # diagnostic.
+        pitch_nominal_randomize = False
+        pitch_nominal_range = [-180.0, 180.0]
         # Piecewise absolute map. |a| <= pitch_fine_clip uses the fine gain
         # (pitch_action_scale); the outer bands sweep the rest of the circle at a
         # coarse gain, so +-180 deg stays reachable.

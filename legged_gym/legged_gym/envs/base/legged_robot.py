@@ -897,20 +897,30 @@ class LeggedRobot(BaseTask):
         A single linear gain cannot do both (30 deg/unit caps travel at 60 deg,
         180 deg/unit drowns the 20 deg gain in noise). The map is continuous at
         the band edges; only its slope jumps.
+
+        The nominal may be a per-env tensor (pitch_nominal_randomize), in which
+        case the band edges move with each env. The result is then clamped,
+        because a nominal near +-180 pushes the fine band across pitch_min/
+        pitch_max.
         """
         d = self.cfg.depth
+        # Per-env base angle when pitch_nominal_randomize is on, else the
+        # scalar; both broadcast against a.
+        nom = getattr(self, "pitch_nominal_env", d.pitch_nominal)
         fc = float(getattr(d, "pitch_fine_clip", 1.0))
         if fc >= 1.0:
-            return torch.clamp(d.pitch_nominal + d.pitch_action_scale * a,
+            return torch.clamp(nom + d.pitch_action_scale * a,
                                d.pitch_min, d.pitch_max)
-        lo = d.pitch_nominal - d.pitch_action_scale * fc
-        hi = d.pitch_nominal + d.pitch_action_scale * fc
+        lo = nom - d.pitch_action_scale * fc
+        hi = nom + d.pitch_action_scale * fc
         g_hi = (d.pitch_max - hi) / (1.0 - fc)
         g_lo = (d.pitch_min - lo) / (fc - 1.0)
-        return torch.where(
-            a > fc, hi + g_hi * (a - fc),
-            torch.where(a < -fc, lo + g_lo * (a + fc),
-                        d.pitch_nominal + d.pitch_action_scale * a))
+        return torch.clamp(
+            torch.where(
+                a > fc, hi + g_hi * (a - fc),
+                torch.where(a < -fc, lo + g_lo * (a + fc),
+                            nom + d.pitch_action_scale * a)),
+            d.pitch_min, d.pitch_max)
 
     def _update_camera_servo(self, actions):
         """Slew the depth-camera pitch servo toward the policy's target.
@@ -1471,7 +1481,12 @@ class LeggedRobot(BaseTask):
         self.last_root_vel[:] = 0.
         if self.num_cam_actions > 0:
             d = self.cfg.depth
-            if getattr(d, "pitch_randomize_init", False):
+            if getattr(d, "pitch_nominal_randomize", False):
+                # The per-env nominal doubles as the reset target: layering
+                # pitch_init_range scatter on top would mix two distributions
+                # and make the servo diagnostic unreadable.
+                true0 = self.pitch_nominal_env[env_ids].clone()
+            elif getattr(d, "pitch_randomize_init", False):
                 lo, hi = d.pitch_init_range
                 true0 = torch_rand_float(
                     lo, hi, (len(env_ids), 1), device=self.device).squeeze(1)
@@ -2796,9 +2811,20 @@ class LeggedRobot(BaseTask):
         self.servo_torques = torch.zeros(
             self.num_envs, self.num_cam_actions, device=self.device, requires_grad=False)
         if self.num_cam_actions > 0:
-            self.cam_pitch_deg[:] = float(self.cfg.depth.pitch_nominal)
-            self.cam_pitch_true_deg[:] = float(self.cfg.depth.pitch_nominal)
-            self.cam_pitch_target_deg[:] = float(self.cfg.depth.pitch_nominal)
+            _nlo, _nhi = getattr(self.cfg.depth, "pitch_nominal_range",
+                                 (self.cfg.depth.pitch_nominal,
+                                  self.cfg.depth.pitch_nominal))
+            if getattr(self.cfg.depth, "pitch_nominal_randomize", False):
+                self.pitch_nominal_env = torch_rand_float(
+                    float(_nlo), float(_nhi), (self.num_envs,),
+                    device=self.device)
+            else:
+                self.pitch_nominal_env = torch.full(
+                    (self.num_envs,), float(self.cfg.depth.pitch_nominal),
+                    device=self.device)
+            self.cam_pitch_deg[:] = self.pitch_nominal_env
+            self.cam_pitch_true_deg[:] = self.pitch_nominal_env
+            self.cam_pitch_target_deg[:] = self.pitch_nominal_env
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
 
         self.reach_goal_timer = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
