@@ -134,7 +134,7 @@ class LeggedRobotCfg(BaseConfig):
         # because nothing pulls the envs back together. While it is on, task
         # difficulty differs per env -- that is the price of a readable servo
         # diagnostic.
-        pitch_nominal_randomize = False
+        pitch_nominal_randomize = True
         pitch_nominal_range = [-180.0, 180.0]
         # Piecewise absolute map. |a| <= pitch_fine_clip uses the fine gain
         # (pitch_action_scale); the outer bands sweep the rest of the circle at a
