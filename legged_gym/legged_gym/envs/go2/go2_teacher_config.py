@@ -497,34 +497,16 @@ class Go2TeacherCfg( Go2RoughCfg ):
             standstill_orientation = 0.5
             feet_contact_forces = -0.01
 
-            # WoCoCo wall-plant set. contact_pts drives the FSM and must never
-            # be 0: _prepare_reward_function POPS zero scales, which would
-            # freeze the stage machine.
-            wococo_contact_pts = 0.5
-            wococo_stage       = 25.0
-            wococo_foot_track  = 0.75
-            wococo_foot_target = 25.0
-            # OFF under wococo_landing_posture_only: the one-shot payout for putting each
-            # FRONT foot on its landing foothold, i.e. the foot-placement regulation the
-            # posture-only landing removes. Restore to 25.0 with posture_only = False.
-            wococo_landing_foot_target = 0.0
-            wococo_base_orient = 0.25
+            termination = -150.0
+            timeout     = 0.0
 
-            # Hurdle-WoCoCo FSM and the legacy hand-tuned wall rewards are off.
-            wall_push_force        = 0.0
-            wococo_hurdle_contact_pts = 0.0
-            wococo_hurdle_stage       = 0.0
-            wall_turn_left         = 0.0
-            wall_feet_alignment    = 0.0
-            wall_approach_decel    = 0.0
-            forbidden_zone_contact = 0.0
-            wall_multi_touch       = 0.0
-            hurdle_contact         = -10.0
-
-            termination      = -150.0
-            timeout          = 0.0
-            hurdle_clearance = -1.0   # per body per step inside the keep-out shell
-            hurdle_pair_sym  = 5.0    # one-shot per leg pair per hurdle slot
+            # The WoCoCo / hurdle / wall set is gone along with the task. Those
+            # rewards are gated on env_class 15 or 19 (_reward_wococo_stage,
+            # _reward_wococo_contact_pts), and terrain_dict leaves every wall
+            # slot at 0.0, so env_class never reaches either value: all of them
+            # returned 0 on every step while still costing a function call and
+            # a logged curve apiece. The config knobs they read still exist on
+            # Go2TeacherCfg.rewards with their defaults, so nothing else broke.
 
 
 class Go2TeacherCfgPPO( Go2RoughCfgPPO ):
