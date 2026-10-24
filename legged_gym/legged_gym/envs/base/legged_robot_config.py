@@ -613,7 +613,7 @@ class LeggedRobotCfg(BaseConfig):
         feet_air_time_threshold = 0.5       # [s] swing time below this pays nothing
         undesired_contacts_threshold = 1.0  # [N] contact force that counts as a touch
 
-        only_positive_rewards = True # if true negative total rewards are clipped at zero (avoids early termination problems)
+        only_positive_rewards = False # if true negative total rewards are clipped at zero (avoids early termination problems)
         only_positive_rewards_exempt_high_levels = False  # preserve penalties at and above the configured level
         only_positive_rewards_clip_below_level = 2  # the clip applies to envs at terrain_level < this; at/above it the clip is skipped (only consulted when only_positive_rewards_exempt_high_levels is True).
         exempt_wococo_contact_pts_from_clip = False  # if True, wococo_contact_pts is summed in *after* the only_positive_rewards clip (same pattern as 'termination'), so its n_wrong penalty can drive total reward negative.
