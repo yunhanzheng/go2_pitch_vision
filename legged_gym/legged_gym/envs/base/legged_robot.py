@@ -2815,9 +2815,12 @@ class LeggedRobot(BaseTask):
                                  (self.cfg.depth.pitch_nominal,
                                   self.cfg.depth.pitch_nominal))
             if getattr(self.cfg.depth, "pitch_nominal_randomize", False):
-                self.pitch_nominal_env = torch_rand_float(
-                    float(_nlo), float(_nhi), (self.num_envs,),
-                    device=self.device)
+                # Uniform draw per env. torch_rand_float only accepts a 2D shape,
+                # and this is a plain (num_envs,) vector, so draw from torch.rand
+                # and scale into [lo, hi).
+                self.pitch_nominal_env = (
+                    torch.rand(self.num_envs, device=self.device)
+                    * (float(_nhi) - float(_nlo)) + float(_nlo))
             else:
                 self.pitch_nominal_env = torch.full(
                     (self.num_envs,), float(self.cfg.depth.pitch_nominal),
